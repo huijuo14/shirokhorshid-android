@@ -1074,6 +1074,39 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
             "KP",  // North Korea
     };
 
+    private static final String[] CONDUIT_TUNNEL_PROTOCOLS = {
+            "INPROXY-WEBRTC-SSH",
+            "INPROXY-WEBRTC-OSSH",
+            "INPROXY-WEBRTC-TLS-OSSH",
+            "INPROXY-WEBRTC-UNFRONTED-MEEK-OSSH",
+            "INPROXY-WEBRTC-UNFRONTED-MEEK-HTTPS-OSSH",
+            "INPROXY-WEBRTC-UNFRONTED-MEEK-SESSION-TICKET-OSSH",
+            "INPROXY-WEBRTC-FRONTED-MEEK-OSSH",
+            "INPROXY-WEBRTC-FRONTED-MEEK-HTTP-OSSH",
+            "INPROXY-WEBRTC-QUIC-OSSH",
+            "INPROXY-WEBRTC-FRONTED-MEEK-QUIC-OSSH",
+            "INPROXY-WEBRTC-SHADOWSOCKS-OSSH",
+    };
+
+    private static final String[] CDN_FRONTING_TUNNEL_PROTOCOLS = {
+            "FRONTED-MEEK-CDN-OSSH",
+    };
+
+    private static final String[] DIRECT_TUNNEL_PROTOCOLS = {
+            "SSH",
+            "OSSH",
+            "TLS-OSSH",
+            "UNFRONTED-MEEK-OSSH",
+            "UNFRONTED-MEEK-HTTPS-OSSH",
+            "UNFRONTED-MEEK-SESSION-TICKET-OSSH",
+            "QUIC-OSSH",
+            "SHADOWSOCKS-OSSH",
+            "FRONTED-MEEK-OSSH",
+            "FRONTED-MEEK-CDN-OSSH",
+            "FRONTED-MEEK-HTTP-OSSH",
+            "FRONTED-MEEK-QUIC-OSSH",
+    };
+
     private Handler sendDataTransferStatsHandler = new Handler();
     private final long sendDataTransferStatsIntervalMs = 1000;
     private Runnable sendDataTransferStats = new Runnable() {
@@ -1658,6 +1691,14 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
         json.put("FrontedMeekDialOverridesProbability", 1.0);
     }
 
+    private static JSONArray makeJsonArray(String[] values) {
+        JSONArray array = new JSONArray();
+        for (String value : values) {
+            array.put(value);
+        }
+        return array;
+    }
+
     public static String buildTunnelCoreConfig(
             Context context,
             Config tunnelConfig,
@@ -1774,14 +1815,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
             
             if ("conduit".equals(protocolSelection)) {
                 // Conduit: only use inproxy protocols
-                JSONArray limitProtocols = new JSONArray();
-                limitProtocols.put("INPROXY-WEBRTC-OSSH");
-                limitProtocols.put("INPROXY-WEBRTC-UNFRONTED-MEEK-HTTPS-OSSH");
-                limitProtocols.put("INPROXY-WEBRTC-UNFRONTED-MEEK-SESSION-TICKET-OSSH");
-                limitProtocols.put("INPROXY-WEBRTC-FRONTED-MEEK-OSSH");
-                limitProtocols.put("INPROXY-WEBRTC-FRONTED-MEEK-HTTP-OSSH");
-                limitProtocols.put("INPROXY-WEBRTC-QUIC-OSSH");
-                json.put("LimitTunnelProtocols", limitProtocols);
+                json.put("LimitTunnelProtocols", makeJsonArray(CONDUIT_TUNNEL_PROTOCOLS));
                 
                 // Determine whether to use personal compartment ID based on conduit mode
                 String conduitMode = tunnelConfig.conduitMode;
@@ -1837,20 +1871,11 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                     }
                 }
             } else if ("cdn_fronting".equals(protocolSelection)) {
-                JSONArray limitProtocols = new JSONArray();
-                limitProtocols.put("FRONTED-MEEK-CDN-OSSH");
-                json.put("LimitTunnelProtocols", limitProtocols);
+                json.put("LimitTunnelProtocols", makeJsonArray(CDN_FRONTING_TUNNEL_PROTOCOLS));
                 json.put("DisableTactics", true);
             } else if ("direct".equals(protocolSelection)) {
-                // Direct: use non-inproxy direct protocols plus the CDN-fronted meek fallback.
-                JSONArray limitProtocols = new JSONArray();
-                limitProtocols.put("SSH");
-                limitProtocols.put("OSSH");
-                limitProtocols.put("TLS-OSSH");
-                limitProtocols.put("QUIC-OSSH");
-                limitProtocols.put("SHADOWSOCKS-OSSH");
-                limitProtocols.put("FRONTED-MEEK-CDN-OSSH");
-                json.put("LimitTunnelProtocols", limitProtocols);
+                // Direct: use non-inproxy direct protocols plus fronting fallbacks.
+                json.put("LimitTunnelProtocols", makeJsonArray(DIRECT_TUNNEL_PROTOCOLS));
                 json.put("DisableTactics", true);
             }
             // For "auto" mode, don't set LimitTunnelProtocols - let Psiphon choose
