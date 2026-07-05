@@ -1,0 +1,135 @@
+name: Build Debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+
+jobs:
+  build-aar:
+    name: Build tunnel-core AAR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tunnel-core
+        uses: actions/checkout@v4
+        with:
+          repository: shirokhorshid/psiphon-tunnel-core
+          ref: shirokhorshid
+          path: psiphon-tunnel-core
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache: false
+      - name: Install Android NDK 23 and platform 30
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;23.1.7779620" "platforms;android-30"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/23.1.7779620" >> $GITHUB_ENV
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+      - name: Set up GOPATH workspace
+        run: |
+          echo "GOPATH=${{ runner.temp }}/gopath" >> $GITHUB_ENV
+          echo "GO111MODULE=off" >> $GITHUB_ENV
+          echo "${{ runner.temp }}/gopath/bin" >> $GITHUB_PATH
+          mkdir -p "${{ runner.temp }}/gopath/src/github.com/Psiphon-Labs"
+          ln -s "$GITHUB_WORKSPACE/psiphon-tunnel-core" "${{ runner.temp }}/gopath/src/github.com/Psiphon-Labs/psiphon-tunnel-core"
+      - name: Install vendored gomobile
+        run: |
+          mkdir -p "$GOPATH/src/golang.org/x"
+          cp -r psiphon-tunnel-core/MobileLibrary/go-mobile "$GOPATH/src/golang.org/x/mobile"
+          sed -i 's|golang.org/x/mobile/cmd/gobind@latest|golang.org/x/mobile/cmd/gobind|' "$GOPATH/src/golang.org/x/mobile/cmd/gomobile/init.go"
+          go install golang.org/x/mobile/cmd/gomobile
+          go install golang.org/x/mobile/cmd/gobind
+          gomobile init -v
+      - name: Build AAR with gomobile bind
+        run: |
+          BUILDDATE=$(date --iso-8601=seconds)
+          BUILDREPO=$(cd "$GITHUB_WORKSPACE/psiphon-tunnel-core" && git remote get-url origin)
+          BUILDREV=$(cd "$GITHUB_WORKSPACE/psiphon-tunnel-core" && git rev-parse --short HEAD)
+          LDFLAGS="-checklinkname=0 -s -w"
+          LDFLAGS="$LDFLAGS -X github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo.buildDate=$BUILDDATE"
+          LDFLAGS="$LDFLAGS -X github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo.buildRepo=$BUILDREPO"
+          LDFLAGS="$LDFLAGS -X github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo.buildRev=$BUILDREV"
+          LDFLAGS="$LDFLAGS -X github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo.goVersion=$(go version | perl -ne '/go(.*?)\s/ && print $1')"
+          LDFLAGS="$LDFLAGS -X github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo.gomobileVersion=vendored"
+          LDFLAGS="$LDFLAGS -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384"
+          BUILD_TAGS="PSIPHON_ENABLE_INPROXY"
+          export CGO_LDFLAGS="-Wl,-z,max-page-size=16384,-z,common-page-size=16384"
+          export GOCACHE=/tmp/go-cache
+          gomobile bind -v -target=android/arm,android/arm64 -tags="$BUILD_TAGS" -ldflags="$LDFLAGS" -o psi.aar github.com/Psiphon-Labs/psiphon-tunnel-core/MobileLibrary/psi
+        working-directory: ${{ runner.temp }}/gopath/src/github.com/Psiphon-Labs/psiphon-tunnel-core/MobileLibrary/Android
+      - name: Post-process AAR
+        run: |
+          WORKDIR="${{ runner.temp }}/gopath/src/github.com/Psiphon-Labs/psiphon-tunnel-core/MobileLibrary/Android"
+          cd "$WORKDIR"
+          mkdir -p aar_tmp && cd aar_tmp
+          unzip -o ../psi.aar
+          cp ../PsiphonTunnel/AndroidManifest.xml .
+          mkdir -p res/xml
+          cp ../PsiphonTunnel/ca_psiphon_psiphontunnel_backup_rules.xml res/xml/
+          ANDROID_JAR="$ANDROID_HOME/platforms/android-30/android.jar"
+          mkdir -p compiled_classes
+          javac -source 1.8 -target 1.8 -bootclasspath "$ANDROID_JAR" -classpath classes.jar -d compiled_classes ../PsiphonTunnel/PsiphonTunnel.java
+          if [ -d compiled_classes ] && [ "$(ls -A compiled_classes)" ]; then
+            cd compiled_classes && jar uf ../classes.jar . && cd ..
+          fi
+          echo "-keep class ca.psiphon.** { *; }" >> proguard.txt
+          echo "-keep class psi.** { *; }" >> proguard.txt
+          rm -f ../ca.psiphon.aar
+          zip -r ../ca.psiphon.aar . -x '*.DS_Store' && cd .. && rm -rf aar_tmp psi.aar
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ca-psiphon-aar
+          path: ${{ runner.temp }}/gopath/src/github.com/Psiphon-Labs/psiphon-tunnel-core/MobileLibrary/Android/ca.psiphon.aar
+          retention-days: 1
+
+  build-apk:
+    name: Build APK
+    needs: build-aar
+    runs-on: ubuntu-latest
+    container:
+      image: cimg/android:2024.01.1-ndk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Download AAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ca-psiphon-aar
+          path: app/libs/
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libtinfo5 python3-pip
+      - name: Download GeoLite2 database
+        run: |
+          curl -sL "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb" -o app/src/main/assets/GeoLite2-Country.mmdb
+      - name: Build debug APK
+        env:
+          PSIPHON_PROPAGATION_CHANNEL_ID: ${{ secrets.PSIPHON_PROPAGATION_CHANNEL_ID }}
+          PSIPHON_SPONSOR_ID: ${{ secrets.PSIPHON_SPONSOR_ID }}
+          PSIPHON_CLIENT_VERSION: ${{ secrets.PSIPHON_CLIENT_VERSION }}
+          PSIPHON_REMOTE_SERVER_LIST_SIGNATURE_PUBLIC_KEY: ${{ secrets.PSIPHON_REMOTE_SERVER_LIST_SIGNATURE_PUBLIC_KEY }}
+          PSIPHON_SERVER_ENTRY_SIGNATURE_PUBLIC_KEY: ${{ secrets.PSIPHON_SERVER_ENTRY_SIGNATURE_PUBLIC_KEY }}
+          PSIPHON_SERVER_ENTRY_EXCHANGE_OBFUSCATION_KEY: ${{ secrets.PSIPHON_SERVER_ENTRY_EXCHANGE_OBFUSCATION_KEY }}
+          PSIPHON_REMOTE_SERVER_LIST_URLS_JSON: ${{ secrets.PSIPHON_REMOTE_SERVER_LIST_URLS_JSON }}
+          PSIPHON_OBFUSCATED_SERVER_LIST_ROOT_URLS_JSON: ${{ secrets.PSIPHON_OBFUSCATED_SERVER_LIST_ROOT_URLS_JSON }}
+          PSIPHON_FEEDBACK_UPLOAD_URLS_JSON: ${{ secrets.PSIPHON_FEEDBACK_UPLOAD_URLS_JSON }}
+          PSIPHON_INFO_LINK_URL: ${{ secrets.PSIPHON_INFO_LINK_URL }}
+          PSIPHON_FAQ_URL: ${{ secrets.PSIPHON_FAQ_URL }}
+          PSIPHON_GET_NEW_VERSION_URL: ${{ secrets.PSIPHON_GET_NEW_VERSION_URL }}
+          PSIPHON_GET_NEW_VERSION_EMAIL: ${{ secrets.PSIPHON_GET_NEW_VERSION_EMAIL }}
+          PSIPHON_DATA_COLLECTION_INFO_URL: ${{ secrets.PSIPHON_DATA_COLLECTION_INFO_URL }}
+        run: |
+          ./gradlew assembleDebug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: shirokhorshid-debug-apk
+          path: app/build/outputs/apk/debug/ShirOKhorshid-debug.apk
+          retention-days: 14
