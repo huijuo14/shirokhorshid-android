@@ -1862,7 +1862,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                 // wake-lock-battery-burning and successful upgrade downloading.
                 // Note that the fall-back untunneled upgrade download doesn't start for 30 secs,
                 // so we should be waiting longer than that.
-                json.put("EstablishTunnelTimeoutSeconds", 300);
+                json.put("EstablishTunnelTimeoutSeconds", 60);
 
                 json.put("TunnelWholeDevice", 0);
                 json.put("EgressRegion", "");
@@ -1979,10 +1979,16 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                 clientFeaturesJsonArray.put("unsafe-traffic-alerts");
             }
             if (clientFeaturesJsonArray.length() > 0) {
-                json.put("ClientFeatures", clientFeaturesJsonArray);
-            }
+                    json.put("ClientFeatures", clientFeaturesJsonArray);
+                }
 
-            json.put("DNSResolverAlternateServers", new JSONArray("[\"1.1.1.1\", \"1.0.0.1\", \"8.8.8.8\", \"8.8.4.4\"]"));
+                        // Fragmentor: split TCP packets to bypass ISP throttling/DPI
+                json.put("FragmentorProtocols", new JSONArray("[\"TCP-OSSH\"]"));
+                json.put("FragmentorLimitProtocols", new JSONArray("[\"SSH\",\"OSSH\"]"));
+                json.put("FragmentorMinTotalBytes", 1000);
+                json.put("FragmentorMaxTotalBytes", 2000);
+
+                json.put("DNSResolverAlternateServers", new JSONArray("[\"1.1.1.1\", \"1.0.0.1\", \"8.8.8.8\", \"8.8.4.4\"]"));
 
             if (!TextUtils.isEmpty(tunnelConfig.deviceLocation)) {
                 json.put("DeviceLocation", tunnelConfig.deviceLocation);

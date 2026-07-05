@@ -274,6 +274,12 @@ android {
             }
 
     signingConfigs {
+        debug {
+            storeFile file("../debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
         release
     }
 
@@ -291,6 +297,7 @@ android {
             pseudoLocalesEnabled true
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
         }
         release {
             debuggable false
