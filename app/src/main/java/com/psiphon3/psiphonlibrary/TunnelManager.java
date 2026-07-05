@@ -360,14 +360,18 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                     // The tunnel is connected but we are not routing traffic through the tunnel yet,
                     // check we need to send a landing page intent.
                     if (networkConnectionState == TunnelState.ConnectionData.NetworkConnectionState.CONNECTED && !isRoutingThroughTunnel) {
+                        // Always route traffic through the tunnel immediately
+                        // This enables true background connection - no need to open the app
+                        m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
+                        // Send handshake intent only if an activity is available (non-blocking)
                         if (m_tunnelState.homePages != null && m_tunnelState.homePages.size() != 0) {
                             if (canSendIntentToActivity()) {
-                                m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
                                 sendHandshakeIntent();
-                                m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
-                                // Do not emit downstream if we are just started routing.
-                                return Observable.empty();
                             }
+                        }
+                        m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
+                        // Do not emit downstream if we are just started routing.
+                        return Observable.empty();
                             // Emit CONNECTING and start waiting for an activity to bind
                             return waitSendIntentAndRouteThroughTunnelCompletable(this::sendHandshakeIntent)
                                     .<TunnelState.ConnectionData.NetworkConnectionState>toObservable()
@@ -393,21 +397,11 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                 .subscribe();
     }
 
-    private Completable waitSendIntentAndRouteThroughTunnelCompletable(Runnable runnable) {
-        return m_newClientPublishRelay
-                // Test the activity client(s) again by pinging, block until there's at least one live client
-                .filter(__ -> pingForActivity())
-                .take(1)
-                .ignoreElements()
-                .doOnSubscribe(__ -> showOpenAppToFinishConnectingNotification())
-                .doOnComplete(() -> {
-                    m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
-                    runnable.run();
-                    m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
-                })
-                // Cancel "Open Psiphon to keep connecting" when completed or disposed
-                .doFinally(this::cancelOpenAppToFinishConnectingNotification);
+        private Completable waitSendIntentAndRouteThroughTunnelCompletable(Runnable runnable) {
+        return Completable.complete();
     }
+
+    private boolean canSendIntentToActivity
 
     private boolean canSendIntentToActivity() {
         return Build.VERSION.SDK_INT < 29 || pingForActivity();

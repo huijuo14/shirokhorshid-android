@@ -335,7 +335,7 @@ android {
             throw new GradleException('signing.properties found but some entries are missing')
         }
     } else {
-        throw new GradleException('signing.properties not found!')
+        println 'Warning: signing.properties not found. Unsigned debug build.'
     }
 
     // For android 14 support we have to use ndk r17c or lower
